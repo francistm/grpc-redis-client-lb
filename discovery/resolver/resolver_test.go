@@ -10,7 +10,6 @@ import (
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
-	"google.golang.org/grpc/grpclog"
 	"google.golang.org/grpc/resolver"
 	grpcResolver "google.golang.org/grpc/resolver"
 
@@ -211,7 +210,7 @@ func Test_schemaResolver_watch(t *testing.T) {
 	r := &schemaResolver{
 		rdb:         rdb,
 		mu:          &sync.RWMutex{},
-		logger:      grpclog.Component("test"),
+		logger:      &logger.NopLogger{},
 		serviceName: "test-service",
 		clientConn:  clientConn,
 		watchTicker: time.NewTicker(100 * time.Millisecond),
