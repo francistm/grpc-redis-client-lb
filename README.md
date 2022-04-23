@@ -30,8 +30,8 @@ _, err := registry.RegisterService(ctx, redisConn, "service-foo", 8080, registry
 
 ## Listening addr providers
 ### Static IP
-the option `registry.WithStaticProvider("127.0.0.1")` is to registry a static ip address into redis.
+The option `registry.WithStaticProvider("127.0.0.1")` is used to register the service with a known IP.
 
 ### AWS ECS
-the option `registry.WithECSProvider()` is used when registry service which running in aws ECS, it will detect container IP through ECS metadata automatically.
+The option `registry.WithECSProvider()` is used to register the service which is running in aws ECS. It will detect container IP through ECS metadata automatically.
 
