@@ -3,7 +3,7 @@
 ## Redis connection
 There's no restriction for redis package.
 
-You can create an struct which wrap the package, and implement the `resolver.Redis` interface.
+You can create a struct which wrap the redis package you're using, and implement the `resolver.Redis` interface.
 ## Discovery
 
 ``` golang
