@@ -5,6 +5,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pkg/errors"
@@ -16,7 +17,7 @@ import (
 var _ grpcResolver.Resolver = (*schemaResolver)(nil)
 
 type schemaResolver struct {
-	isClosed bool
+	isClosed uint32
 
 	mu            *sync.RWMutex
 	watchTicker   *time.Ticker
@@ -37,7 +38,7 @@ func buildResolverAddr(id, addr string) grpcResolver.Address {
 }
 
 func (r *schemaResolver) watch() {
-	for !r.isClosed {
+	for atomic.LoadUint32(&r.isClosed) == 0 {
 		r.ResolveNow(grpcResolver.ResolveNowOptions{})
 		<-r.watchTicker.C
 	}
@@ -47,7 +48,7 @@ func (r *schemaResolver) ResolveNow(options grpcResolver.ResolveNowOptions) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	if r.isClosed {
+	if atomic.LoadUint32(&r.isClosed) > 0 {
 		return
 	}
 
@@ -131,6 +132,6 @@ func (r *schemaResolver) Close() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	r.isClosed = true
+	atomic.StoreUint32(&r.isClosed, 1)
 	r.watchTicker.Stop()
 }

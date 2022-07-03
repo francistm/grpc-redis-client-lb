@@ -26,7 +26,7 @@ func Test_schemaResolver_ResolveNow(t *testing.T) {
 	clientConn := &mocks.ClientConn{}
 	nopLogger := &logger.NopLogger{}
 
-	// case 2
+	// case redis get key names failure
 	rds.On("Keys", mock.Anything, ":case-2:*").Return([]string{}, errors.Errorf("test error"))
 	clientConn.
 		On("ReportError", mock.MatchedBy(func(err error) bool {
@@ -34,7 +34,7 @@ func Test_schemaResolver_ResolveNow(t *testing.T) {
 		})).
 		Return(nil)
 
-	// case 3
+	// redis get key names but empty
 	rds.On("Keys", mock.Anything, ":case-3:*").Return([]string{}, nil)
 	clientConn.
 		On("ReportError", mock.MatchedBy(func(err error) bool {
@@ -42,7 +42,7 @@ func Test_schemaResolver_ResolveNow(t *testing.T) {
 		})).
 		Return(nil)
 
-	// case 4
+	// redis get key values falure
 	rds.On("Keys", mock.Anything, ":case-4:*").Return([]string{"a", "b"}, nil)
 	rds.On("GetStr", mock.Anything, "a").Return("", errors.Errorf("test error"))
 	rds.On("GetStr", mock.Anything, "b").Return("", errors.Errorf("test error"))
@@ -52,11 +52,11 @@ func Test_schemaResolver_ResolveNow(t *testing.T) {
 		})).
 		Return(nil)
 
-	// case 5
+	// redis get invalid key value
 	rds.On("Keys", mock.Anything, ":case-5:*").Return([]string{"a", "b"}, nil)
 	rds.On("GetStr", mock.Anything, "a").Return("c", nil)
 
-	// case 6
+	// working properly
 	rds.On("Keys", mock.Anything, ":case-6:*").Return([]string{"service:a", "service:b", "service:c", "service:d", "service:e"}, nil)
 	rds.On("GetStr", mock.Anything, "service:a").Return("172.17.0.1:8888", nil)
 	rds.On("GetStr", mock.Anything, "service:b").Return("172.17.0.2:8888", nil)
@@ -100,15 +100,15 @@ func Test_schemaResolver_ResolveNow(t *testing.T) {
 		args args
 	}{
 		{
-			name: "case 1",
+			name: "is closed",
 			r: &schemaResolver{
 				serviceName: "case-1",
 				mu:          &sync.RWMutex{},
-				isClosed:    true,
+				isClosed:    1,
 			},
 		},
 		{
-			name: "case 2",
+			name: "redis get key names failure",
 			r: &schemaResolver{
 				mu:          &sync.RWMutex{},
 				serviceName: "case-2",
@@ -119,7 +119,7 @@ func Test_schemaResolver_ResolveNow(t *testing.T) {
 			args: args{},
 		},
 		{
-			name: "case 3",
+			name: "redis get key names but empty",
 			r: &schemaResolver{
 				serviceName: "case-3",
 				mu:          &sync.RWMutex{},
@@ -130,7 +130,7 @@ func Test_schemaResolver_ResolveNow(t *testing.T) {
 			args: args{},
 		},
 		{
-			name: "case 4",
+			name: "redis get key values falure",
 			r: &schemaResolver{
 				mu:          &sync.RWMutex{},
 				serviceName: "case-4",
@@ -141,7 +141,7 @@ func Test_schemaResolver_ResolveNow(t *testing.T) {
 			args: args{},
 		},
 		{
-			name: "case 5",
+			name: "redis get invalid key value",
 			r: &schemaResolver{
 				mu:          &sync.RWMutex{},
 				serviceName: "case-5",
@@ -152,7 +152,7 @@ func Test_schemaResolver_ResolveNow(t *testing.T) {
 			args: args{},
 		},
 		{
-			name: "case 6",
+			name: "working properly",
 			r: &schemaResolver{
 				mu:            &sync.RWMutex{},
 				serviceName:   "case-6",
@@ -190,7 +190,7 @@ func Test_schemaResolver_Close(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.r.Close()
-			assert.True(t, tt.r.isClosed)
+			assert.Equal(t, uint32(1), tt.r.isClosed)
 		})
 	}
 }
