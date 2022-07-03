@@ -17,7 +17,8 @@ import (
 var _ grpcResolver.Resolver = (*schemaResolver)(nil)
 
 type schemaResolver struct {
-	isClosed uint32
+	isClosed       uint32
+	isClosedNotify chan struct{}
 
 	mu            *sync.RWMutex
 	watchTicker   *time.Ticker
@@ -39,8 +40,12 @@ func buildResolverAddr(id, addr string) grpcResolver.Address {
 
 func (r *schemaResolver) watch() {
 	for atomic.LoadUint32(&r.isClosed) == 0 {
-		r.ResolveNow(grpcResolver.ResolveNowOptions{})
-		<-r.watchTicker.C
+		select {
+		case <-r.watchTicker.C:
+			r.ResolveNow(grpcResolver.ResolveNowOptions{})
+		case <-r.isClosedNotify:
+			return
+		}
 	}
 }
 
@@ -134,4 +139,5 @@ func (r *schemaResolver) Close() {
 
 	atomic.StoreUint32(&r.isClosed, 1)
 	r.watchTicker.Stop()
+	r.isClosedNotify <- struct{}{}
 }

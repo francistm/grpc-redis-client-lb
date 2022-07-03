@@ -40,6 +40,8 @@ func (b *builder) Build(target grpcResolver.Target, cc grpcResolver.ClientConn, 
 	}
 
 	res := &schemaResolver{
+		isClosedNotify: make(chan struct{}, 1),
+
 		mu:            new(sync.RWMutex),
 		rdb:           b.rds,
 		clientConn:    cc,

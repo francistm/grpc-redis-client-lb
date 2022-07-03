@@ -182,8 +182,9 @@ func Test_schemaResolver_Close(t *testing.T) {
 		{
 			name: "case 1",
 			r: &schemaResolver{
-				mu:          &sync.RWMutex{},
-				watchTicker: time.NewTicker(10 * time.Second),
+				isClosedNotify: make(chan struct{}, 1),
+				mu:             &sync.RWMutex{},
+				watchTicker:    time.NewTicker(10 * time.Second),
 			},
 		},
 	}
@@ -207,31 +208,31 @@ func Test_schemaResolver_watch(t *testing.T) {
 		})).
 		Return(nil)
 
-	r := &schemaResolver{
-		rdb:         rdb,
-		mu:          &sync.RWMutex{},
-		logger:      &logger.NopLogger{},
-		serviceName: "test-service",
-		clientConn:  clientConn,
-		watchTicker: time.NewTicker(100 * time.Millisecond),
-	}
-
-	time.AfterFunc(500*time.Millisecond, func() {
-		r.Close()
-	})
-
 	tests := []struct {
-		name string
-		r    *schemaResolver
+		name     string
+		resolver *schemaResolver
 	}{
 		{
 			name: "case 1",
-			r:    r,
+			resolver: &schemaResolver{
+				isClosedNotify: make(chan struct{}, 1),
+
+				rdb:         rdb,
+				mu:          &sync.RWMutex{},
+				logger:      &logger.NopLogger{},
+				serviceName: "test-service",
+				clientConn:  clientConn,
+				watchTicker: time.NewTicker(100 * time.Millisecond),
+			},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tt.r.watch()
+			time.AfterFunc(2*time.Second, func() {
+				tt.resolver.Close()
+			})
+
+			tt.resolver.watch()
 		})
 	}
 
