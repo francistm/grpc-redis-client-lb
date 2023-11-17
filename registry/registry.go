@@ -10,28 +10,38 @@ import (
 	"github.com/pkg/errors"
 )
 
-func RegisterService(ctx context.Context, rdsClient RedisClient, serviceName string, listenPort int, opts ...RegistryOptionApplyFn) (string, error) {
-	option := &RegistryOption{
-		registryTTL:               10 * time.Second,
-		registryKeepAliveDuration: 3 * time.Second,
+func RegisterService(ctx context.Context, rdsClient RedisClient, serviceName string, listenPort int, opts ...Option) (string, error) {
+	var (
+		provider                  Provider
+		registryTTL               time.Duration
+		registryKeepAliveDuration time.Duration
+	)
+
+	for _, opt := range opts {
+		switch opt.kind() {
+		case registryOptionProvider:
+			provider = opt.value().(Provider)
+
+		case registryOptionRegistryTTL:
+			registryTTL = opt.value().(time.Duration)
+
+		case registryOptionRegistryKeepAliveDuration:
+			registryKeepAliveDuration = opt.value().(time.Duration)
+		}
 	}
 
-	for _, applyFn := range opts {
-		applyFn(option)
-	}
-
-	if option.provider == nil {
+	if provider == nil {
 		return "", errors.New("missing host addr provider")
 	}
 
-	if option.registryTTL <= option.registryKeepAliveDuration {
+	if registryTTL <= registryKeepAliveDuration {
 		return "", errors.New("registry TTL should be greater than registry keepalive duration")
 	}
 
 	instanceUUID := uuid.NewString()
 	instanceID := strings.Join([]string{"", serviceName, instanceUUID}, ":")
 
-	hostAddr, err := option.provider.DetectHostAddr(ctx)
+	hostAddr, err := provider.DetectHostAddr(ctx)
 
 	if err != nil {
 		return "", errors.Wrap(err, "unable to retrieve container addr")
@@ -40,14 +50,19 @@ func RegisterService(ctx context.Context, rdsClient RedisClient, serviceName str
 	listenAddr := fmt.Sprintf("%s:%d", hostAddr, listenPort)
 
 	go func() {
-		t := time.NewTicker(option.registryKeepAliveDuration)
+		var t *time.Timer
 
-		select {
-		case <-t.C:
-			_ = rdsClient.SetStrWithExpire(ctx, instanceID, listenAddr, int64(option.registryTTL.Seconds()))
+		for {
+			t = time.NewTimer(registryKeepAliveDuration)
+			_ = rdsClient.SetStrWithExpire(ctx, instanceID, listenAddr, int64(registryTTL.Seconds()))
 
-		case <-ctx.Done():
-			t.Stop()
+			select {
+			case <-ctx.Done():
+				t.Stop()
+				return
+
+			case <-t.C:
+			}
 		}
 	}()
 

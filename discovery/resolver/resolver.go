@@ -2,31 +2,28 @@ package resolver
 
 import (
 	"context"
-	"net"
+	"fmt"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"time"
 
-	"github.com/pkg/errors"
 	"google.golang.org/grpc/attributes"
 	"google.golang.org/grpc/grpclog"
+	"google.golang.org/grpc/resolver"
 	grpcResolver "google.golang.org/grpc/resolver"
 )
 
 var _ grpcResolver.Resolver = (*schemaResolver)(nil)
 
 type schemaResolver struct {
-	isClosed       uint32
-	isClosedNotify chan struct{}
-
-	mu            *sync.RWMutex
-	watchTicker   *time.Ticker
-	rdb           Redis
-	logger        grpclog.LoggerV2
-	clientConn    grpcResolver.ClientConn
-	serviceName   string
-	whitelistNets []*net.IPNet
+	ctx            context.Context
+	cancel         context.CancelFunc
+	resolveChan    chan struct{}
+	exitChan       chan struct{}
+	lookupInterval time.Duration
+	rdb            Redis
+	logger         grpclog.LoggerV2
+	clientConn     grpcResolver.ClientConn
+	serviceName    string
 }
 
 func buildResolverAddr(id, addr string) grpcResolver.Address {
@@ -39,105 +36,89 @@ func buildResolverAddr(id, addr string) grpcResolver.Address {
 }
 
 func (r *schemaResolver) watch() {
-	for atomic.LoadUint32(&r.isClosed) == 0 {
+	defer func() {
+		r.exitChan <- struct{}{}
+	}()
+
+	for {
+		state, err := r.lookup()
+
+		if err != nil {
+			r.clientConn.ReportError(err)
+		} else if err := r.clientConn.UpdateState(state); err != nil {
+			r.logger.Errorf("update state failed for service %s due %s", r.serviceName, err.Error())
+		}
+
+		timer := time.NewTimer(r.lookupInterval)
+
 		select {
-		case <-r.watchTicker.C:
-			r.ResolveNow(grpcResolver.ResolveNowOptions{})
-		case <-r.isClosedNotify:
+		case <-r.ctx.Done():
+			timer.Stop()
 			return
+
+		case <-timer.C:
+			// block until interval timer emitted
+
+		case <-r.resolveChan:
+			// block until ResolvedNow called
 		}
 	}
 }
 
-func (r *schemaResolver) ResolveNow(options grpcResolver.ResolveNowOptions) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
+func (r *schemaResolver) lookup() (resolver.State, error) {
+	var (
+		ctx     = r.ctx
+		state   = resolver.State{}
+		redisNS = strings.Join([]string{"", r.serviceName, "*"}, ":")
+	)
 
-	if atomic.LoadUint32(&r.isClosed) > 0 {
-		return
-	}
+	r.logger.Infof("looking up the address for service %s", r.serviceName)
 
-	ctx := context.Background()
-	redisNS := strings.Join([]string{"", r.serviceName, "*"}, ":")
 	originalKeys, err := r.rdb.Keys(ctx, redisNS)
 
 	if err != nil {
-		r.logger.Errorln(err)
-		r.clientConn.ReportError(errors.Wrap(err, "failed to get keys from redis"))
-		return
+		return state, fmt.Errorf("failed to get keys from redis when discover service %s %w", r.serviceName, err)
 	}
 
 	if len(originalKeys) == 0 {
-		r.logger.Errorf("no registered service for %s://%s", schema, r.serviceName)
-		r.clientConn.ReportError(errors.Errorf("no registered service for %s://%s", schema, r.serviceName))
-		return
+		return state, nil
 	}
 
-	addrs := make([]grpcResolver.Address, 0, len(originalKeys))
+	state.Addresses = make([]resolver.Address, 0, len(originalKeys))
 
 	for _, originalKey := range originalKeys {
 		originalValue, err := r.rdb.GetStr(ctx, originalKey)
-		originalKeyParts := strings.Split(strings.TrimPrefix(originalKey, ":"), ":")
 
 		if err != nil {
-			r.logger.Errorln(err)
+			r.logger.Errorf("failed to get value of key %s due %s", originalKey, err)
 			continue
 		}
 
-		if len(originalKeyParts) != 2 {
-			r.logger.Errorf("redis key (%s) has invalid format", originalKey)
-			r.clientConn.ReportError(errors.Errorf("redis key (%s) has invalid format", originalKey))
+		// ensure the value will follow the format of "host:port"
+		if !strings.Contains(originalValue, ":") {
 			continue
 		}
 
-		// split the ip and port number
-		originalIPAddr := strings.Split(originalValue, ":")
-
-		if len(originalIPAddr) != 2 {
-			continue
-		}
-
-		originalIP := net.ParseIP(originalIPAddr[0])
-
-		// is not a valid ipv4 address
-		if originalIP == nil {
-			continue
-		}
-
-		// skip if not in whitelist
-		if len(r.whitelistNets) > 0 {
-			for _, i := range r.whitelistNets {
-				if i.Contains(originalIP) {
-					goto AppendToAddr
-				}
-			}
-
-			continue
-		}
-
-	AppendToAddr:
-		addr := buildResolverAddr(originalKeyParts[1], originalValue)
-		addrs = append(addrs, addr)
+		state.Addresses = append(state.Addresses, resolver.Address{
+			Addr:       originalValue,
+			ServerName: r.serviceName,
+		})
 	}
 
-	if len(addrs) == 0 {
-		r.clientConn.ReportError(errors.Errorf("no valid service registeration for %s://%s", schema, r.serviceName))
-	} else {
-		err := r.clientConn.UpdateState(grpcResolver.State{
-			Addresses: addrs,
-		})
+	return state, nil
+}
 
-		if err != nil {
-			r.clientConn.ReportError(errors.Wrapf(err, "failed to update conn state"))
-		}
+func (r *schemaResolver) ResolveNow(options grpcResolver.ResolveNowOptions) {
+	select {
+	case r.resolveChan <- struct{}{}:
+		// begin to resolve
+
+	default:
+		// resolving in progress
 	}
 }
 
 func (r *schemaResolver) Close() {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	atomic.StoreUint32(&r.isClosed, 1)
-	r.watchTicker.Stop()
-	r.isClosedNotify <- struct{}{}
+	r.cancel()
+	<-r.exitChan
 }

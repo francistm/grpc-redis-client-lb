@@ -33,7 +33,7 @@ func TestNewBuilder(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := NewBuilder(tt.args.rds, WithIPv4Whitelist(tt.args.subnet), WithLogger(nopLogger))
+			got := NewBuilder(tt.args.rds, WithLogger(nopLogger))
 			assert.IsType(t, tt.want, got)
 		})
 	}

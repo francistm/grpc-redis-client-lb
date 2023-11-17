@@ -1,9 +1,8 @@
 package resolver
 
 import (
-	"net"
+	"context"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/pkg/errors"
@@ -39,27 +38,23 @@ func (b *builder) Build(target grpcResolver.Target, cc grpcResolver.ClientConn, 
 		return nil, errors.Errorf("unexpected schema: %s", target.URL.Scheme)
 	}
 
-	res := &schemaResolver{
-		isClosedNotify: make(chan struct{}, 1),
+	ctx, cancelFunc := context.WithCancel(context.Background())
 
-		mu:            new(sync.RWMutex),
-		rdb:           b.rds,
-		clientConn:    cc,
-		serviceName:   target.URL.Host,
-		watchTicker:   time.NewTicker(5 * time.Second),
-		whitelistNets: make([]*net.IPNet, 0, len(b.whitelistSubnets)),
+	res := &schemaResolver{
+		ctx:            ctx,
+		cancel:         cancelFunc,
+		resolveChan:    make(chan struct{}),
+		exitChan:       make(chan struct{}),
+		lookupInterval: 5 * time.Second,
+		rdb:            b.rds,
+		clientConn:     cc,
+		serviceName:    target.URL.Host,
 	}
 
 	if b.logger == nil {
 		res.logger = grpclog.Component(b.Scheme())
 	} else {
 		res.logger = b.logger
-	}
-
-	for _, s := range b.whitelistSubnets {
-		if _, net, err := net.ParseCIDR(s); err == nil {
-			res.whitelistNets = append(res.whitelistNets, net)
-		}
 	}
 
 	go res.watch()

@@ -9,9 +9,3 @@ func WithLogger(logger grpclog.LoggerV2) BuilderOptApplyFn {
 		builder.logger = logger
 	}
 }
-
-func WithIPv4Whitelist(subnets []string) BuilderOptApplyFn {
-	return func(builder *builder) {
-		builder.whitelistSubnets = subnets
-	}
-}
